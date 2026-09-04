@@ -163,6 +163,7 @@ class NatureAmbience {
   start() {
     this.ensureContext();
     if (this.ctx.state === "suspended") this.ctx.resume();
+    if (this.running && this.audible) return; // már szól, ne duplázzon
     this.running = true;
     this.audible = true;
     this.fadeTo(1, 1.5);
@@ -189,25 +190,60 @@ class NatureAmbience {
   }
 }
 
+/* Automatikus indulás: amikor a zöldfal-szakasz a képernyőre ér,
+   a hang beúszik; elhagyáskor kiúszik. A böngészők felhasználói
+   gesztus előtt tiltják a hangot, ezért az első érintés/kattintás/
+   billentyű "feloldja" az AudioContextet — ha a szakasz épp látszik,
+   azonnal megszólal. A gomb némítóként működik. */
+
 const ambience = new NatureAmbience();
 const toggle = document.getElementById("natureToggle");
 const toggleLabel = toggle.querySelector("span");
 const greenwallSection = document.getElementById("zoldfal");
 
-toggle.addEventListener("click", () => {
-  const isOn = toggle.getAttribute("aria-pressed") === "true";
-  if (isOn) {
-    ambience.stop();
-    toggle.setAttribute("aria-pressed", "false");
-    toggleLabel.textContent = toggleLabel.dataset.off;
-  } else {
+let userMuted = false;
+let sectionVisible = false;
+
+function syncButton() {
+  const playing = !userMuted;
+  toggle.setAttribute("aria-pressed", playing ? "true" : "false");
+  toggleLabel.textContent = playing ? toggleLabel.dataset.on : toggleLabel.dataset.off;
+}
+
+function updateAmbience() {
+  if (sectionVisible && !userMuted) {
     ambience.start();
-    toggle.setAttribute("aria-pressed", "true");
-    toggleLabel.textContent = toggleLabel.dataset.on;
+  } else {
+    ambience.stop();
   }
+}
+
+toggle.addEventListener("click", () => {
+  userMuted = !userMuted;
+  syncButton();
+  updateAmbience();
 });
 
 new IntersectionObserver(
-  ([e]) => ambience.setSectionVisible(e.isIntersecting),
+  ([e]) => {
+    sectionVisible = e.isIntersecting;
+    updateAmbience();
+  },
   { threshold: 0.25 }
 ).observe(greenwallSection);
+
+/* egyszeri gesztus-feloldás: bármilyen érintésre/kattintásra/billentyűre
+   feléled a hangmotor, és ha épp a zöldfalnál járunk, meg is szólal */
+function unlockAudio() {
+  ambience.ensureContext();
+  if (ambience.ctx.state === "suspended") ambience.ctx.resume();
+  updateAmbience();
+  ["pointerdown", "touchend", "keydown"].forEach((ev) =>
+    window.removeEventListener(ev, unlockAudio)
+  );
+}
+["pointerdown", "touchend", "keydown"].forEach((ev) =>
+  window.addEventListener(ev, unlockAudio, { passive: true })
+);
+
+syncButton();
