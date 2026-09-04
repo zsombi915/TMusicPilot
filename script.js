@@ -108,6 +108,7 @@ class NatureAmbience {
   /* egy madárfütty: 2–5 gyors, lecsúszó szinuszhang */
   chirp() {
     const ctx = this.ctx;
+    if (ctx.state !== "running") return; // zárolt hangmotor: ne halmozzon
     const now = ctx.currentTime;
     const notes = 2 + Math.floor(Math.random() * 4);
     const baseFreq = 2300 + Math.random() * 1700;
@@ -203,9 +204,16 @@ const greenwallSection = document.getElementById("zoldfal");
 
 let userMuted = false;
 let sectionVisible = false;
+let audioUnlocked = false; // a böngésző engedélyezte-e már a hangot
 
+function isPlaying() {
+  return audioUnlocked && sectionVisible && !userMuted;
+}
+
+/* a gomb mindig a VALÓS állapotot mutatja:
+   ha szól → "némítása", ha nem szól → "bekapcsolása" */
 function syncButton() {
-  const playing = !userMuted;
+  const playing = isPlaying();
   toggle.setAttribute("aria-pressed", playing ? "true" : "false");
   toggleLabel.textContent = playing ? toggleLabel.dataset.on : toggleLabel.dataset.off;
 }
@@ -216,34 +224,49 @@ function updateAmbience() {
   } else {
     ambience.stop();
   }
+  syncButton();
 }
 
+/* böngésző-feloldás: BÁRMILYEN gesztus bárhol az oldalon
+   (kattintás, érintés, billentyű) élesíti a hangmotort —
+   így mire a látogató a zöldfalhoz görget, magától megszólal.
+   Csak görgetőkerékkel, kattintás nélkül érkezőknél marad néma:
+   ott az első kattintás (pl. a gomb) indítja. */
+function tryUnlock() {
+  ambience.ensureContext();
+  ambience.ctx.resume().then(() => {
+    if (ambience.ctx.state === "running" && !audioUnlocked) {
+      audioUnlocked = true;
+      UNLOCK_EVENTS.forEach((ev) =>
+        document.removeEventListener(ev, tryUnlock, true)
+      );
+      updateAmbience();
+    }
+  }).catch(() => {});
+}
+const UNLOCK_EVENTS = ["pointerdown", "pointerup", "mousedown", "keydown", "touchstart", "touchend", "click"];
+UNLOCK_EVENTS.forEach((ev) =>
+  document.addEventListener(ev, tryUnlock, { capture: true, passive: true })
+);
+
 toggle.addEventListener("click", () => {
-  userMuted = !userMuted;
-  syncButton();
+  if (!isPlaying()) {
+    // nem szól (némítva volt, vagy még zárolt): indítás
+    userMuted = false;
+    tryUnlock();
+  } else {
+    userMuted = true;
+  }
   updateAmbience();
 });
 
 new IntersectionObserver(
   ([e]) => {
     sectionVisible = e.isIntersecting;
+    tryUnlock(); // ha volt már korábbi gesztus, ez azonnal élesít
     updateAmbience();
   },
   { threshold: 0.25 }
 ).observe(greenwallSection);
-
-/* egyszeri gesztus-feloldás: bármilyen érintésre/kattintásra/billentyűre
-   feléled a hangmotor, és ha épp a zöldfalnál járunk, meg is szólal */
-function unlockAudio() {
-  ambience.ensureContext();
-  if (ambience.ctx.state === "suspended") ambience.ctx.resume();
-  updateAmbience();
-  ["pointerdown", "touchend", "keydown"].forEach((ev) =>
-    window.removeEventListener(ev, unlockAudio)
-  );
-}
-["pointerdown", "touchend", "keydown"].forEach((ev) =>
-  window.addEventListener(ev, unlockAudio, { passive: true })
-);
 
 syncButton();
